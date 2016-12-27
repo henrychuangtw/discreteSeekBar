@@ -130,6 +130,7 @@ public class DiscreteSeekBar extends View {
     private static final int PROGRESS_ANIMATION_DURATION = 250;
     private static final int INDICATOR_DELAY_FOR_TAPS = 150;
     private static final int DEFAULT_THUMB_COLOR = 0xff009688;
+    private static final int SEPARATION_DP = 5;
     private ThumbDrawable mThumb;
     private TrackRectDrawable mTrack;
     private TrackRectDrawable mScrubber;
@@ -179,13 +180,6 @@ public class DiscreteSeekBar extends View {
 
         mTouchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
         float density = context.getResources().getDisplayMetrics().density;
-        mTrackHeight = (int) (1 * density);
-        mScrubberHeight = (int) (4 * density);
-        int thumbSize = (int) (density * ThumbDrawable.DEFAULT_SIZE_DP);
-
-        //Extra pixels for a touch area of 48dp
-        int touchBounds = (int) (density * 32);
-        mAddedTouchBounds = (touchBounds - thumbSize) / 2;
 
         TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.DiscreteSeekBar,
                 defStyleAttr, R.style.Widget_DiscreteSeekBar);
@@ -196,6 +190,16 @@ public class DiscreteSeekBar extends View {
         mMirrorForRtl = a.getBoolean(R.styleable.DiscreteSeekBar_dsb_mirrorForRtl, mMirrorForRtl);
         mAllowTrackClick = a.getBoolean(R.styleable.DiscreteSeekBar_dsb_allowTrackClickToDrag, mAllowTrackClick);
         mIndicatorPopupEnabled = a.getBoolean(R.styleable.DiscreteSeekBar_dsb_indicatorPopupEnabled, mIndicatorPopupEnabled);
+        mTrackHeight = a.getDimensionPixelSize(R.styleable.DiscreteSeekBar_dsb_trackHeight, (int) (1 * density));
+        mScrubberHeight = a.getDimensionPixelSize(R.styleable.DiscreteSeekBar_dsb_scrubberHeight, (int) (4 * density));
+        int thumbSize = a.getDimensionPixelSize(R.styleable.DiscreteSeekBar_dsb_thumbSize, (int) (density * ThumbDrawable.DEFAULT_SIZE_DP));
+        int separation = a.getDimensionPixelSize(R.styleable.DiscreteSeekBar_dsb_indicatorSeparation,
+                (int) (SEPARATION_DP * density));
+
+        //Extra pixels for a minimum touch area of 32dp
+        int touchBounds = (int) (density * 32);
+        mAddedTouchBounds = Math.max(0, (touchBounds - thumbSize) / 2);
+
         int indexMax = R.styleable.DiscreteSeekBar_dsb_max;
         int indexMin = R.styleable.DiscreteSeekBar_dsb_min;
         int indexValue = R.styleable.DiscreteSeekBar_dsb_value;
@@ -243,13 +247,13 @@ public class DiscreteSeekBar extends View {
         if (editMode || progressColor == null) {
             progressColor = new ColorStateList(new int[][]{new int[]{}}, new int[]{DEFAULT_THUMB_COLOR});
         }
+
         mRipple = SeekBarCompat.getRipple(rippleColor);
         if (isLollipopOrGreater) {
             SeekBarCompat.setBackground(this, mRipple);
         } else {
             mRipple.setCallback(this);
         }
-
 
         TrackRectDrawable shapeDrawable = new TrackRectDrawable(trackColor);
         mTrack = shapeDrawable;
@@ -265,7 +269,8 @@ public class DiscreteSeekBar extends View {
 
 
         if (!editMode) {
-            mIndicator = new PopupIndicator(context, attrs, defStyleAttr, convertValueToMessage(mMax));
+            mIndicator = new PopupIndicator(context, attrs, defStyleAttr, convertValueToMessage(mMax),
+                    thumbSize, thumbSize + mAddedTouchBounds + separation);
             mIndicator.setListener(mFloaterListener);
         }
         a.recycle();
@@ -295,13 +300,7 @@ public class DiscreteSeekBar extends View {
     public void setNumericTransformer(@Nullable NumericTransformer transformer) {
         mNumericTransformer = transformer != null ? transformer : new DefaultNumericTransformer();
         //We need to refresh the PopupIndicator view
-        if (!isInEditMode()) {
-            if (mNumericTransformer.useStringTransform()) {
-                mIndicator.updateSizes(mNumericTransformer.transformToString(mMax));
-            } else {
-                mIndicator.updateSizes(convertValueToMessage(mNumericTransformer.transform(mMax)));
-            }
-        }
+        updateIndicatorSizes();
         updateProgressMessage(mValue);
     }
 
@@ -338,6 +337,8 @@ public class DiscreteSeekBar extends View {
         if (mValue < mMin || mValue > mMax) {
             setProgress(mMin);
         }
+        //We need to refresh the PopupIndicator view
+        updateIndicatorSizes();
     }
 
     public int getMax() {
@@ -465,6 +466,24 @@ public class DiscreteSeekBar extends View {
     }
 
     /**
+     * Sets the color of the seekbar ripple
+     *
+     * @param color The color the track  ripple will be changed to
+     */
+    public void setRippleColor(int color) {
+        setRippleColor(new ColorStateList(new int[][]{new int[]{}}, new int[]{color}));
+    }
+
+    /**
+     * Sets the color of the seekbar ripple
+     *
+     * @param colorStateList The ColorStateList the track ripple will be changed to
+     */
+    public void setRippleColor(@NonNull ColorStateList colorStateList) {
+        SeekBarCompat.setRippleColor(mRipple, colorStateList);
+    }
+
+    /**
      * Sets the color of the seekbar scrubber
      *
      * @param color The color the track will be changed to
@@ -488,6 +507,17 @@ public class DiscreteSeekBar extends View {
      */
     public void setIndicatorPopupEnabled(boolean enabled) {
         this.mIndicatorPopupEnabled = enabled;
+    }
+
+    private void updateIndicatorSizes() {
+        if (!isInEditMode()) {
+            if (mNumericTransformer.useStringTransform()) {
+                mIndicator.updateSizes(mNumericTransformer.transformToString(mMax));
+            } else {
+                mIndicator.updateSizes(convertValueToMessage(mNumericTransformer.transform(mMax)));
+            }
+        }
+
     }
 
     private void notifyProgress(int value, boolean fromUser) {
@@ -690,6 +720,12 @@ public class DiscreteSeekBar extends View {
                 }
                 break;
             case MotionEvent.ACTION_UP:
+                if (!isDragging() && mAllowTrackClick) {
+                    startDragging(event, false);
+                    updateDragging(event);
+                }
+                stopDragging();
+                break;
             case MotionEvent.ACTION_CANCEL:
                 stopDragging();
                 break;
